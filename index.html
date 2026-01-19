@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>敏的助手</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* 自定义滚动条样式 */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: #94a3b8;
+        }
+
+        /* 编辑器层叠核心样式 */
+        .editor-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .editor-layer {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            padding: 1rem; /* p-4 */
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: 1rem; /* text-base */
+            line-height: 1.625; /* leading-relaxed */
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-y: auto;
+        }
+
+        /* 顶层输入框：文字透明，光标黑色，背景透明 */
+        #editor-textarea {
+            z-index: 10;
+            background-color: transparent;
+            color: transparent;
+            caret-color: #0f172a; /* slate-900 */
+            resize: none;
+            outline: none;
+        }
+        
+        #editor-textarea::selection {
+            background-color: rgba(191, 219, 254, 0.5); /* blue-200 */
+            color: transparent;
+        }
+
+        /* 底层展示层：显示高亮，禁止鼠标交互 */
+        #editor-backdrop {
+            z-index: 0;
+            color: #334155; /* slate-700 */
+            pointer-events: none;
+            /* 隐藏滚动条，由 JS 同步滚动 */
+            scrollbar-width: none; 
+            -ms-overflow-style: none;
+        }
+        #editor-backdrop::-webkit-scrollbar { 
+            display: none; 
+        }
+
+        /* 动画 */
+        .fade-in {
+            animation: fadeIn 0.2s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .zoom-in {
+            animation: zoomIn 0.2s ease-out;
+        }
+        @keyframes zoomIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-900 flex flex-col h-screen overflow-hidden">
+
+    <!-- 顶部导航 -->
+    <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="bg-indigo-600 p-2 rounded-lg text-white">
+                <i data-lucide="shield-alert" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">敏的助手</h1>
+                <p class="text-xs text-slate-500">保护内容合规发布 · 本地安全处理</p>
+            </div>
+        </div>
+        <div class="flex gap-3">
+            <button id="btn-settings" class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+                词库设置 (<span id="lexicon-count">20</span>)
+            </button>
+            <button id="btn-copy-result" class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm">
+                <i data-lucide="copy" class="w-4 h-4"></i>
+                复制修改结果
+            </button>
+        </div>
+    </header>
+
+    <!-- 主体内容 -->
+    <main class="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full p-4 md:p-6 gap-6 h-[calc(100vh-80px)]">
+        
+        <!-- 左侧：输入与原文高亮 -->
+        <div class="flex-1 flex flex-col bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-full min-h-[600px]">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
+                <h2 class="font-semibold text-slate-700 flex items-center gap-2">
+                    <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+                    原文 (自动检测)
+                </h2>
+                <div class="flex gap-2">
+                    <input type="file" id="file-input-txt" accept=".txt" class="hidden">
+                    <button id="btn-import-txt" class="text-xs flex items-center gap-1 px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 text-slate-700">
+                        <i data-lucide="upload" class="w-3 h-3"></i> 导入
+                    </button>
+                    <button id="btn-clear" class="text-xs flex items-center gap-1 px-2 py-1 text-red-600 bg-white border border-red-200 rounded hover:bg-red-50">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i> 清空
+                    </button>
+                </div>
+            </div>
+            
+            <div class="flex-1 relative group bg-white">
+                <div class="editor-container">
+                    <!-- 底层：高亮层 -->
+                    <div id="editor-backdrop" class="editor-layer custom-scrollbar"></div>
+                    <!-- 顶层：输入层 -->
+                    <textarea id="editor-textarea" class="editor-layer custom-scrollbar" placeholder="在此粘贴文章..." spellcheck="false"></textarea>
+                </div>
+            </div>
+            
+            <div class="p-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 flex justify-between shrink-0">
+                <span id="char-count">0 字符</span>
+                <span>原文编辑模式</span>
+            </div>
+        </div>
+
+        <!-- 右侧：结果预览 -->
+        <div class="w-full md:w-[45%] flex flex-col gap-4 h-full min-h-[600px]">
+            
+            <!-- 操作面板 -->
+            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm shrink-0">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-slate-700">清洗进度</h3>
+                    <div class="flex gap-2 text-xs font-bold">
+                        <span class="bg-red-100 text-red-700 px-2 py-1 rounded">待处理: <span id="stat-remaining">0</span></span>
+                        <span class="bg-green-100 text-green-700 px-2 py-1 rounded">已修改: <span id="stat-modified">0</span></span>
+                    </div>
+                </div>
+
+                <div id="batch-actions" class="flex gap-2 hidden">
+                    <button id="btn-batch-split" class="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors" title="拆字模式">
+                        <i data-lucide="type" class="w-3.5 h-3.5"></i>
+                        一键拆字
+                    </button>
+                    <button id="btn-batch-radical" class="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors" title="偏旁拆解模式">
+                        <i data-lucide="scissors" class="w-3.5 h-3.5"></i>
+                        一键拆偏旁
+                    </button>
+                    <button id="btn-batch-mask" class="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors" title="星号打码">
+                        <i data-lucide="eraser" class="w-3.5 h-3.5"></i>
+                        一键打码
+                    </button>
+                    <button id="btn-batch-reset" class="w-8 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-slate-600" title="重置所有修改">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+                <div id="no-actions-hint" class="text-xs text-slate-400 text-center py-2">暂无敏感词</div>
+            </div>
+
+            <!-- 可视化预览区 -->
+            <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden min-h-0">
+                <div class="p-4 border-b border-slate-100 bg-slate-50/50 shrink-0">
+                    <h2 class="font-semibold text-slate-700 flex items-center gap-2">
+                        <i data-lucide="check-circle" class="w-[18px] h-[18px]"></i>
+                        修改结果预览
+                    </h2>
+                </div>
+                <div id="preview-container" class="p-6 flex-1 overflow-y-auto custom-scrollbar font-sans text-base leading-relaxed break-words whitespace-pre-wrap">
+                    <!-- 预览内容将渲染在这里 -->
+                    <div class="h-full flex flex-col items-center justify-center text-slate-400">
+                        <i data-lucide="file-text" class="w-12 h-12 mb-4 opacity-20"></i>
+                        <p>左侧输入内容后，此处显示结果</p>
+                    </div>
+                </div>
+                <div class="p-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 text-center shrink-0">
+                    点击红色词语进行修改，绿色为已修改内容
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 词库设置 Modal -->
+    <div id="modal-settings" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] zoom-in">
+            <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">词库管理</h3>
+                    <p class="text-sm text-slate-500 mt-1">每行一个敏感词</p>
+                </div>
+                <button id="btn-close-settings" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 flex-1 overflow-hidden flex flex-col">
+                <textarea id="lexicon-textarea" class="flex-1 w-full border border-slate-300 rounded-lg p-4 font-mono text-sm focus:ring-2 focus:ring-indigo-500 resize-none outline-none custom-scrollbar"></textarea>
+                <div class="flex justify-between items-center mt-4">
+                    <div>
+                        <input type="file" id="file-input-lexicon" accept=".txt" class="hidden">
+                        <button id="btn-import-lexicon" class="text-sm text-slate-600 hover:text-indigo-600 flex items-center gap-1 font-medium">
+                            <i data-lucide="upload" class="w-4 h-4"></i> 导入txt
+                        </button>
+                    </div>
+                    <button id="btn-save-lexicon" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+                        保存并应用
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 单词修改 Modal -->
+    <div id="modal-word-edit" class="fixed inset-0 z-50 hidden flex items-center justify-center">
+        <div id="modal-word-overlay" class="absolute inset-0 bg-black/20 backdrop-blur-[1px]"></div>
+        
+        <div class="bg-white rounded-xl shadow-2xl border border-slate-200 p-5 w-[360px] zoom-in relative z-10">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-slate-700">修改敏感词</h3>
+                <button id="btn-close-word-edit" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-[18px] h-[18px]"></i>
+                </button>
+            </div>
+            
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-500 mb-1">原文</label>
+                <div id="current-sensitive-word" class="p-2 bg-red-50 text-red-700 rounded border border-red-100 font-medium"></div>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-500 mb-1">自定义替换</label>
+                <div class="flex gap-2">
+                    <input type="text" id="input-custom-replace" placeholder="输入替换内容..." class="flex-1 border border-slate-300 rounded px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+                    <button id="btn-confirm-custom" class="bg-indigo-600 text-white px-3 rounded hover:bg-indigo-700 flex items-center justify-center">
+                        <i data-lucide="check-circle" class="w-[18px] h-[18px]"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 border-t border-slate-100 pt-4">
+                <button id="btn-single-split" class="col-span-1 px-2 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs transition-colors flex items-center justify-center gap-1">
+                    <i data-lucide="type" class="w-3 h-3"></i> 拆分
+                </button>
+                <button id="btn-single-radical" class="col-span-1 px-2 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs transition-colors flex items-center justify-center gap-1">
+                    <i data-lucide="scissors" class="w-3 h-3"></i> 拆偏旁
+                </button>
+                <button id="btn-single-mask" class="col-span-1 px-2 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs transition-colors flex items-center justify-center gap-1">
+                    <i data-lucide="eraser" class="w-3 h-3"></i> 打码
+                </button>
+                <button id="btn-single-delete" class="col-span-1 px-2 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 rounded text-xs transition-colors flex items-center justify-center gap-1">
+                    <i data-lucide="trash-2" class="w-3 h-3"></i> 直接删除
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg text-white text-sm font-medium z-50 hidden flex items-center gap-2 fade-in">
+        <i id="toast-icon" data-lucide="check-circle" class="w-4 h-4"></i>
+        <span id="toast-message">Notification</span>
+    </div>
+
+    <script>
+        // -----------------------------------------------------------------------------
+        // 数据与状态
+        // -----------------------------------------------------------------------------
+        const DEFAULT_LEXICON = [
+            "第一", "顶级", "国家级", "最强", "首选", "极致", "独家", "完美", 
+            "100%", "包过", "零风险", "史无前例", "永久", "万能", "绝对",
+            "最佳", "独一无二", "世界级", "金牌", "名牌"
+        ];
+
+        const RADICAL_MAP = {
+            '第': '⺮弟', '一': '一', '顶': '丁页', '级': '纟及',
+            '国': '囗玉', '家': '宀豕', '最': '日取', '强': '弓虽',
+            '首': '丷自', '选': '辶先', '极': '木及', '致': '至攵',
+            '独': '犭虫', '完': '宀元', '美': '羊大', '包': '勹巳',
+            '过': '辶寸', '零': '雨令', '风': '⻛乂', '险': '阝佥',
+            '史': '口丨', '无': '一尢', '例': '亻列', '前': '丷月刂',
+            '永': '丶水', '久': '⺈人', '万': '一勹', '能': '厶月匕匕',
+            '绝': '纟色', '对': '又寸', '佳': '亻圭', '金': '人王',
+            '牌': '片卑', '名': '夕口', '世': '廿乚', '界': '田介',
+            '敏': '每攵', '感': '咸心', '词': '讠司', '违': '辶韦',
+            '禁': '林示', '药': '艹约'
+        };
+
+        let state = {
+            inputText: "",
+            lexicon: new Set(DEFAULT_LEXICON),
+            detectedWords: [], // { word, index, length }
+            modifications: {}, // { index: replacementString }
+            selectedMatch: null
+        };
+
+        // -----------------------------------------------------------------------------
+        // 核心工具函数
+        // -----------------------------------------------------------------------------
+        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        const suggestReplacement = (word, type) => {
+            if (type === 'mask') return '*'.repeat(word.length);
+            if (type === 'split') return word.split('').join('-');
+            if (type === 'radical') {
+                return word.split('').map(char => RADICAL_MAP[char] || char).join('');
+            }
+            return word;
+        };
+
+        const analyzeText = () => {
+            const { inputText, lexicon } = state;
+            if (!inputText || lexicon.size === 0) {
+                state.detectedWords = [];
+                return;
+            }
+
+            // 按长度排序优先匹配长词
+            const sortedWords = Array.from(lexicon).sort((a, b) => b.length - a.length);
+            try {
+                const pattern = new RegExp(sortedWords.map(escapeRegExp).join('|'), 'g');
+                const matches = [];
+                let match;
+                while ((match = pattern.exec(inputText)) !== null) {
+                    matches.push({
+                        word: match[0],
+                        index: match.index,
+                        length: match[0].length
+                    });
+                }
+                state.detectedWords = matches;
+            } catch (e) {
+                console.error("Regex error", e);
+                state.detectedWords = [];
+            }
+        };
+
+        const generateFinalText = () => {
+            let result = "";
+            let lastIndex = 0;
+            const { detectedWords, modifications, inputText } = state;
+            
+            detectedWords.forEach(match => {
+                result += inputText.substring(lastIndex, match.index);
+                if (modifications.hasOwnProperty(match.index)) {
+                    result += modifications[match.index];
+                } else {
+                    result += match.word;
+                }
+                lastIndex = match.index + match.length;
+            });
+            result += inputText.substring(lastIndex);
+            return result;
+        };
+
+        // -----------------------------------------------------------------------------
+        // UI 渲染函数
+        // -----------------------------------------------------------------------------
+        const dom = {
+            editor: document.getElementById('editor-textarea'),
+            backdrop: document.getElementById('editor-backdrop'),
+            preview: document.getElementById('preview-container'),
+            charCount: document.getElementById('char-count'),
+            statRemaining: document.getElementById('stat-remaining'),
+            statModified: document.getElementById('stat-modified'),
+            batchActions: document.getElementById('batch-actions'),
+            noActionsHint: document.getElementById('no-actions-hint'),
+            lexiconTextarea: document.getElementById('lexicon-textarea'),
+            lexiconCount: document.getElementById('lexicon-count'),
+            toast: document.getElementById('toast'),
+            toastMsg: document.getElementById('toast-message'),
+            toastIcon: document.getElementById('toast-icon')
+        };
+
+        // 初始化图标
+        lucide.createIcons();
+
+        // 渲染左侧高亮（底层）
+        const renderBackdrop = () => {
+            const { inputText, detectedWords } = state;
+            let html = '';
+            let lastIndex = 0;
+
+            detectedWords.forEach(match => {
+                // 普通文本
+                html += escapeHtml(inputText.substring(lastIndex, match.index));
+                // 高亮文本 (只负责显示红色背景)
+                html += `<span class="bg-red-100 border-b-2 border-transparent text-transparent">${escapeHtml(match.word)}</span>`;
+                lastIndex = match.index + match.length;
+            });
+            html += escapeHtml(inputText.substring(lastIndex));
+            
+            // 处理结尾换行
+            if (inputText.endsWith('\n')) html += '<br>';
+            
+            dom.backdrop.innerHTML = html;
+        };
+
+        // 渲染右侧预览
+        const renderPreview = () => {
+            const { inputText, detectedWords, modifications } = state;
+            
+            if (!inputText) {
+                dom.preview.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-slate-400">
+                        <i data-lucide="file-text" class="w-12 h-12 mb-4 opacity-20"></i>
+                        <p>左侧输入内容后，此处显示结果</p>
+                    </div>`;
+                lucide.createIcons(); // 重新渲染新插入的图标
+                return;
+            }
+
+            let html = '';
+            let lastIndex = 0;
+
+            detectedWords.forEach((match, i) => {
+                html += escapeHtml(inputText.substring(lastIndex, match.index));
+
+                const isModified = modifications.hasOwnProperty(match.index);
+                const replacement = modifications[match.index];
+
+                if (isModified) {
+                    html += `<span class="bg-green-100 text-green-700 border-b-2 border-green-400 px-0.5 rounded mx-0.5 font-medium fade-in">${escapeHtml(replacement)}</span>`;
+                } else {
+                    // 添加 data-index 用于点击事件
+                    html += `<span data-match-index="${i}" class="cursor-pointer bg-red-100 text-red-600 border-b-2 border-red-400 hover:bg-red-200 transition-colors px-0.5 rounded mx-0.5 font-medium relative group" title="点击修改">${escapeHtml(match.word)}</span>`;
+                }
+                lastIndex = match.index + match.length;
+            });
+
+            html += escapeHtml(inputText.substring(lastIndex));
+            dom.preview.innerHTML = html;
+            
+            // 绑定点击事件到红色敏感词
+            document.querySelectorAll('#preview-container span[data-match-index]').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    const idx = parseInt(e.target.getAttribute('data-match-index'));
+                    openWordModal(state.detectedWords[idx]);
+                });
+            });
+        };
+
+        const updateStats = () => {
+            const total = state.detectedWords.length;
+            const modified = Object.keys(state.modifications).length;
+            const remaining = total - modified;
+            
+            dom.statRemaining.textContent = remaining;
+            dom.statModified.textContent = modified;
+            dom.charCount.textContent = `${state.inputText.length} 字符`;
+
+            if (total > 0) {
+                dom.batchActions.classList.remove('hidden');
+                dom.noActionsHint.classList.add('hidden');
+            } else {
+                dom.batchActions.classList.add('hidden');
+                dom.noActionsHint.classList.remove('hidden');
+            }
+        };
+
+        const refreshUI = () => {
+            renderBackdrop();
+            renderPreview();
+            updateStats();
+        };
+
+        const escapeHtml = (unsafe) => {
+            return unsafe
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        };
+
+        // -----------------------------------------------------------------------------
+        // 交互逻辑
+        // -----------------------------------------------------------------------------
+        
+        // 1. 输入处理
+        dom.editor.addEventListener('input', (e) => {
+            state.inputText = e.target.value;
+            // 原文变动，清理失效的修改记录
+            state.modifications = {}; 
+            analyzeText();
+            refreshUI();
+        });
+
+        // 滚动同步
+        dom.editor.addEventListener('scroll', () => {
+            dom.backdrop.scrollTop = dom.editor.scrollTop;
+        });
+
+        // 2. 词库设置 Modal
+        const settingsModal = document.getElementById('modal-settings');
+        const openSettings = () => {
+            dom.lexiconTextarea.value = Array.from(state.lexicon).join('\n');
+            settingsModal.classList.remove('hidden');
+        };
+        const closeSettings = () => settingsModal.classList.add('hidden');
+
+        document.getElementById('btn-settings').addEventListener('click', openSettings);
+        document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
+        
+        // 保存词库
+        document.getElementById('btn-save-lexicon').addEventListener('click', () => {
+            const text = dom.lexiconTextarea.value;
+            const lines = text.split(/[\n,，]+/).map(s => s.trim()).filter(s => s);
+            state.lexicon = new Set(lines);
+            dom.lexiconCount.textContent = lines.length;
+            
+            showToast(`词库已更新，当前包含 ${lines.length} 个敏感词`);
+            closeSettings();
+            analyzeText(); // 重新分析
+            refreshUI();
+        });
+
+        // 导入词库
+        document.getElementById('btn-import-lexicon').addEventListener('click', () => document.getElementById('file-input-lexicon').click());
+        document.getElementById('file-input-lexicon').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                dom.lexiconTextarea.value = ev.target.result;
+            };
+            reader.readAsText(file);
+        });
+
+        // 3. 单词修改 Modal
+        const wordModal = document.getElementById('modal-word-edit');
+        const customInput = document.getElementById('input-custom-replace');
+        const wordDisplay = document.getElementById('current-sensitive-word');
+        const btns = {
+            split: document.getElementById('btn-single-split'),
+            radical: document.getElementById('btn-single-radical'),
+            mask: document.getElementById('btn-single-mask'),
+            del: document.getElementById('btn-single-delete'),
+            custom: document.getElementById('btn-confirm-custom')
+        };
+
+        const openWordModal = (match) => {
+            state.selectedMatch = match;
+            wordDisplay.textContent = match.word;
+            customInput.value = state.modifications[match.index] || "";
+            
+            // 更新按钮文字
+            btns.split.innerHTML = `<i data-lucide="type" class="w-3 h-3 mr-1"></i> 拆分 (${suggestReplacement(match.word, 'split')})`;
+            btns.radical.innerHTML = `<i data-lucide="scissors" class="w-3 h-3 mr-1"></i> 拆偏旁 (${suggestReplacement(match.word, 'radical')})`;
+            
+            lucide.createIcons(); // 更新后需重新渲染图标
+            wordModal.classList.remove('hidden');
+            customInput.focus();
+        };
+
+        const closeWordModal = () => {
+            state.selectedMatch = null;
+            wordModal.classList.add('hidden');
+        };
+
+        const applyModification = (newValue) => {
+            if (state.selectedMatch) {
+                state.modifications[state.selectedMatch.index] = newValue;
+                closeWordModal();
+                refreshUI();
+            }
+        };
+
+        document.getElementById('btn-close-word-edit').addEventListener('click', closeWordModal);
+        document.getElementById('modal-word-overlay').addEventListener('click', closeWordModal);
+        
+        btns.split.addEventListener('click', () => applyModification(suggestReplacement(state.selectedMatch.word, 'split')));
+        btns.radical.addEventListener('click', () => applyModification(suggestReplacement(state.selectedMatch.word, 'radical')));
+        btns.mask.addEventListener('click', () => applyModification(suggestReplacement(state.selectedMatch.word, 'mask')));
+        btns.del.addEventListener('click', () => applyModification(''));
+        btns.custom.addEventListener('click', () => applyModification(customInput.value));
+        customInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') applyModification(customInput.value);
+        });
+
+        // 4. 批量操作
+        const batchReplace = (type) => {
+            state.detectedWords.forEach(match => {
+                if (!state.modifications.hasOwnProperty(match.index)) {
+                    state.modifications[match.index] = suggestReplacement(match.word, type);
+                }
+            });
+            refreshUI();
+            showToast('批量处理完成');
+        };
+
+        document.getElementById('btn-batch-split').addEventListener('click', () => batchReplace('split'));
+        document.getElementById('btn-batch-radical').addEventListener('click', () => batchReplace('radical'));
+        document.getElementById('btn-batch-mask').addEventListener('click', () => batchReplace('mask'));
+        document.getElementById('btn-batch-reset').addEventListener('click', () => {
+            state.modifications = {};
+            refreshUI();
+            showToast('已重置所有修改');
+        });
+
+        // 5. 顶部工具栏与文件操作
+        document.getElementById('btn-clear').addEventListener('click', () => {
+            state.inputText = "";
+            dom.editor.value = "";
+            state.modifications = {};
+            state.detectedWords = [];
+            refreshUI();
+        });
+
+        document.getElementById('btn-import-txt').addEventListener('click', () => document.getElementById('file-input-txt').click());
+        document.getElementById('file-input-txt').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                state.inputText = ev.target.result;
+                dom.editor.value = state.inputText;
+                state.modifications = {};
+                analyzeText();
+                refreshUI();
+                showToast("文章加载成功");
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('btn-copy-result').addEventListener('click', () => {
+            const text = generateFinalText();
+            if (!text) return;
+            
+            // 使用传统 copy 兼容性更好
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                document.execCommand('copy');
+                showToast('已复制修改后的结果');
+            } catch (err) {
+                showToast('复制失败', 'error');
+            }
+            document.body.removeChild(textarea);
+        });
+
+        // Toast 提示
+        let toastTimeout;
+        const showToast = (msg, type = 'success') => {
+            dom.toastMsg.textContent = msg;
+            dom.toast.className = `fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg text-white text-sm font-medium z-50 flex items-center gap-2 fade-in ${type === 'error' ? 'bg-red-500' : 'bg-slate-800'}`;
+            
+            // 更新图标
+            dom.toastIcon.setAttribute('data-lucide', type === 'error' ? 'alert-triangle' : 'check-circle');
+            lucide.createIcons();
+            
+            dom.toast.classList.remove('hidden');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                dom.toast.classList.add('hidden');
+            }, 3000);
+        };
+
+    </script>
+</body>
+</html>
